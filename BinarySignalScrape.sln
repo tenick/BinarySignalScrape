@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.29519.87
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinarySignalScrape", "BinarySignalScrape\BinarySignalScrape.csproj", "{D658C4DF-3563-484E-8C7B-C7E6DC93B540}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{D658C4DF-3563-484E-8C7B-C7E6DC93B540}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D658C4DF-3563-484E-8C7B-C7E6DC93B540}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D658C4DF-3563-484E-8C7B-C7E6DC93B540}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D658C4DF-3563-484E-8C7B-C7E6DC93B540}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {AAFFFF09-0B2D-4C81-A445-D7575979A3A7}
+	EndGlobalSection
+EndGlobal
