@@ -23,6 +23,7 @@ namespace BinarySignalScrape
         private string Symbol;
         private bool Terminate;
         private int ChildNo;
+        private string CurrentPrice_Direction;
         private string FileName;
         public string FilePath { private get; set; }
         public bool Stopped { get; private set; }
@@ -44,7 +45,6 @@ namespace BinarySignalScrape
             string currencyPair = url.Substring(url.Length - 6);
             FileName = currencyPair + ".txt";
             Symbol = FileName.Substring(0, FileName.Length - 4).ToUpper().Insert(3, "/");
-
             InitializeComponent();
         }
         #endregion
@@ -57,25 +57,43 @@ namespace BinarySignalScrape
                 Stopped = false;
                 IWebDriver driver;
                 ChromeOptions options = new ChromeOptions();
+                // ChromeDriver is just AWFUL because every version or two it breaks unless you pass cryptic arguments
+                options.PageLoadStrategy = PageLoadStrategy.None; // https://www.skptricks.com/2018/08/timed-out-receiving-message-from-renderer-selenium.html //AGRESSIVE
+                options.AddArguments("start-maximized"); // https://stackoverflow.com/a/26283818/1689770
+                options.AddArguments("enable-automation"); // https://stackoverflow.com/a/43840128/1689770
+                options.AddArguments("--headless"); // only if you are ACTUALLY running headless
+                options.AddArgument("--ignore-certificate-errors");
+                options.AddArgument("--ignore-ssl-errors");
+                options.AddArguments("--no-sandbox"); //https://stackoverflow.com/a/50725918/1689770
+                options.AddArguments("--disable-infobars"); //https://stackoverflow.com/a/43840128/1689770
+                options.AddArguments("--disable-dev-shm-usage"); //https://stackoverflow.com/a/50725918/1689770
+                options.AddArguments("--disable-browser-side-navigation"); //https://stackoverflow.com/a/49123152/1689770
+                options.AddArguments("--disable-gpu"); //https://stackoverflow.com/questions/51959986/how-to-solve-selenium-chromedriver-timed-out-receiving-message-from-renderer-exc
+                options.AddArguments("--log-level=3");
+                options.AddArguments("--silent");
                 ChromeDriverService chromeDriverService = ChromeDriverService.CreateDefaultService();
+                chromeDriverService.HideCommandPromptWindow = true;
+                chromeDriverService.SuppressInitialDiagnosticInformation = true;
                 
-                driver = new ChromeDriver(chromeDriverService, options, TimeSpan.FromHours(5));   // initializes driver
-                driver.Manage().Timeouts().ImplicitWait = TimeSpan.FromHours(5); // will wait for elements to appear
-
+                driver = new ChromeDriver(chromeDriverService, options);   // initializes driver
                 LogIn(driver);
-                driver.Navigate().GoToUrl(URL); // setting URL property invokes navigating to the URL (loads the document, replacing the previous document. (even if it's the same URL))
 
+                driver.Navigate().GoToUrl(URL); // setting URL property invokes navigating to the URL (loads the document, replacing the previous document. (even if it's the same URL))
+                new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitForListActive(driver)); // waits for Navigate().GoToUrl(URL) to load
+            
+                Console.WriteLine(Symbol + ": " + URL);
                 while (!Terminate)
                 {
-                    WaitResultVisibility(driver); // Waits for signal to appear
-                    driver.Navigate().Refresh();
+                    //new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitResultVisibility(driver)); // Waits for signal to appear
 
-                    if (Terminate)
-                        break;
+                    try {
+                        driver.Navigate().Refresh();
+                        new WebDriverWait(driver, TimeSpan.FromSeconds(30)).Until(condition => WaitDirectionVisiblity(driver)); } // Waits for direction (PUT/CALL) to appear
+                    catch { continue; }
                     GetData(driver);
 
-                    WaitResultInvisibility(driver); // Waits for signal to disappear
-                    driver.Navigate().Refresh(); 
+                    //new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitResultInvisibility(driver)); // Waits for signal to disappear
+                    //driver.Navigate().Refresh(); 
                 }
                 driver.Quit(); // driver.Close(); will close the current browser, and driver.Quit(); will terminate pretty much everything associated with it
                 Stopped = true;
@@ -90,9 +108,11 @@ namespace BinarySignalScrape
         #region HELPER METHODS
         private void GetData(IWebDriver driver)
         {
+            if (Terminate)
+                return;
             Regex expiryTime_Pattern = new Regex("\\d{1,2}:\\d\\d");
             IWebElement h1 = driver.FindElement(By.TagName("h1"));
-            IWebElement texts = driver.FindElement(By.CssSelector("#chart > svg > g > g:nth-child(14) > text.y2"));
+            IWebElement texts = driver.FindElement(By.XPath("//*[@id='chart']/*[local-name()='svg']/*[local-name()='g']/*[local-name()='g'][7]/*[local-name()='text'][contains(text(), 'CALL') or contains(text(), 'PUT')]"));
             string[] price_directionArr = texts.Text.Split();
 
             // binary-signal data
@@ -101,21 +121,25 @@ namespace BinarySignalScrape
             string direction = price_directionArr[1];
             string expirationTime = expiryTime_Pattern.Match(h1.Text).Value;
 
-            if (direction != "WAIT")
+            string Price_Direction = texts.Text;
+            if (direction != "WAIT" & CurrentPrice_Direction != Price_Direction)
             {
                 string data = symbol + ";" + direction + ";" + price + ";" + expirationTime + ";";
+                CurrentPrice_Direction = Price_Direction;
                 WriteToFile(data);
                 Invoke((MethodInvoker)delegate
                 {
-                    
-                    currency_txtBox.AppendText(DateTime.Now.ToString() + " | " + data + Environment.NewLine); // lets check
+                    TabControl ParentTabControl = (TabControl)(Parent);
+                    ParentTabControl.SelectedTab = this;
+                    currency_txtBox.AppendText(DateTime.Now.ToString() + " | " + data + Environment.NewLine);
                 });
             }
         }
         private void LogIn(IWebDriver driver)
         {
-            string[] accInfo = File.ReadAllLines(@"account.txt");
             driver.Navigate().GoToUrl("https://binary-signal.com/en/login/index");
+            new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitForLoginElementsVisibility(driver));
+            string[] accInfo = File.ReadAllLines(@"account.txt");
             IWebElement usernameInputBox = driver.FindElement(By.CssSelector("input[name='user_name']"));
             IWebElement passwordInputBox = driver.FindElement(By.CssSelector("input[name='user_password']"));
             IWebElement loginButton = driver.FindElement(By.CssSelector("body > div.container > form > button"));
@@ -124,28 +148,76 @@ namespace BinarySignalScrape
             passwordInputBox.SendKeys(accInfo[1]);
             Thread.Sleep(300);
             loginButton.Click();
+            new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitForLogin(driver));
         }
-        private void WaitResultVisibility(IWebDriver driver)
+        private bool WaitResultVisibility(IWebDriver driver)
         {
-            while (true & !Terminate)
+            try
             {
-                IWebElement result = driver.FindElement(By.CssSelector(string.Format("#tickers_nav > li:nth-child({0}) > a > span", ChildNo)));
-                string styleAttrib = result.GetAttribute("style");
-                if (!styleAttrib.Contains("none"))
-                    break;
-                Thread.Sleep(50);
+                if (Terminate)
+                    return true;
+                var e = driver.FindElement(By.XPath(string.Format("//*[@id='tickers_nav']/li[{0}]/a/span[contains(@style,'inline')]", ChildNo)));
+                return e.Displayed;
             }
+            catch { return false; }
         }
-        private void WaitResultInvisibility(IWebDriver driver)
+        private bool WaitResultInvisibility(IWebDriver driver)
         {
-            while (true & !Terminate)
+            try
             {
-                IWebElement result = driver.FindElement(By.CssSelector(string.Format("#tickers_nav > li:nth-child({0}) > a > span", ChildNo)));
-                string styleAttrib = result.GetAttribute("style");
-                if (styleAttrib.Contains("none"))
-                    break;
-                Thread.Sleep(50);
+                if (Terminate)
+                    return true;
+                var e = driver.FindElement(By.XPath(string.Format("//*[@id='tickers_nav']/li[{0}]/a/span[contains(@style,'none')]", ChildNo)));
+                return e.Displayed;
             }
+            catch { return false; }
+            
+        }
+        private bool WaitDirectionVisiblity(IWebDriver driver)
+        {
+            try
+            {
+                if (Terminate)
+                    return true;
+                var e = driver.FindElement(By.XPath("//*[@id='chart']/*[local-name()='svg']/*[local-name()='g']/*[local-name()='g'][7]/*[local-name()='text'][contains(text(), 'CALL') or contains(text(), 'PUT')]"));
+                return e.Displayed;
+            }
+            catch { return false; }
+        }
+        private bool WaitForLoginElementsVisibility(IWebDriver driver)
+        {
+            try
+            {
+                if (Terminate)
+                    return true;
+                var usernameInputBox = driver.FindElement(By.CssSelector("input[name='user_name']"));
+                var passwordInputBox = driver.FindElement(By.CssSelector("input[name='user_password']"));
+                var loginButton = driver.FindElement(By.CssSelector("body > div.container > form > button"));
+                return usernameInputBox.Displayed & passwordInputBox.Displayed & (loginButton.Displayed & loginButton.Enabled);
+            }
+            catch { return false; }
+        }
+        private bool WaitForLogin(IWebDriver driver)
+        {
+            try
+            {
+                if (Terminate)
+                    return true;
+                var logIn = driver.FindElement(By.XPath("//*[@id='navbar']/ul/li[4]/a[contains(text(), 'account')]"));
+                return logIn.Displayed;
+            }
+            catch { return false; }
+        }
+        private bool WaitForListActive(IWebDriver driver)
+        {
+            try
+            {
+                if (Terminate)
+                    return true;
+                var listActivity = driver.FindElement(By.XPath(string.Format("//*[@id='tickers_nav']/li[{0}][@class='active']", ChildNo)));
+                return listActivity.Displayed;
+            }
+            catch { return false; }
         }
         private void WriteToFile(string appendText)
         {

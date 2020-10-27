@@ -21,7 +21,9 @@ namespace BinarySignalScrape
     public partial class MainForm : Form
     {
         #region FIELDS
+
         private string URL = "https://binary-signal.com/";
+
         #endregion
 
         #region CONSTRUCTOR
