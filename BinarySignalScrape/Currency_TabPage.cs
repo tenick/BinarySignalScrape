@@ -24,11 +24,12 @@ namespace BinarySignalScrape
         private bool Terminate;
         private int ChildNo;
         private string CurrentPrice_Direction;
+        private string CurrentExpiryTime;
         private string FileName;
         public string FilePath { private get; set; }
         public bool Stopped { get; private set; }
 
-        
+        private bool SyncVisible = false;
         #endregion
 
         #region CONSTRUCTOR
@@ -61,7 +62,7 @@ namespace BinarySignalScrape
                 options.PageLoadStrategy = PageLoadStrategy.None; // https://www.skptricks.com/2018/08/timed-out-receiving-message-from-renderer-selenium.html //AGRESSIVE
                 options.AddArguments("start-maximized"); // https://stackoverflow.com/a/26283818/1689770
                 options.AddArguments("enable-automation"); // https://stackoverflow.com/a/43840128/1689770
-                options.AddArguments("--headless"); // only if you are ACTUALLY running headless
+                //options.AddArguments("--headless"); // only if you are ACTUALLY running headless
                 options.AddArgument("--ignore-certificate-errors");
                 options.AddArgument("--ignore-ssl-errors");
                 options.AddArguments("--no-sandbox"); //https://stackoverflow.com/a/50725918/1689770
@@ -72,28 +73,40 @@ namespace BinarySignalScrape
                 options.AddArguments("--log-level=3");
                 options.AddArguments("--silent");
                 ChromeDriverService chromeDriverService = ChromeDriverService.CreateDefaultService();
-                chromeDriverService.HideCommandPromptWindow = true;
+                //chromeDriverService.HideCommandPromptWindow = true;
                 chromeDriverService.SuppressInitialDiagnosticInformation = true;
                 
                 driver = new ChromeDriver(chromeDriverService, options);   // initializes driver
                 LogIn(driver);
 
                 driver.Navigate().GoToUrl(URL); // setting URL property invokes navigating to the URL (loads the document, replacing the previous document. (even if it's the same URL))
-                new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitForListActive(driver)); // waits for Navigate().GoToUrl(URL) to load
+                new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitForListActive(driver)); // waits for Navigate().GoToUrl(URL) to load         
             
                 Console.WriteLine(Symbol + ": " + URL);
                 while (!Terminate)
                 {
-                    //new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitResultVisibility(driver)); // Waits for signal to appear
+                    if (Terminate)
+                        break;
+                    new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitResultVisibility(driver)); // Waits for signal to appear
 
                     try {
                         driver.Navigate().Refresh();
-                        new WebDriverWait(driver, TimeSpan.FromSeconds(30)).Until(condition => WaitDirectionVisiblity(driver)); } // Waits for direction (PUT/CALL) to appear
+                        new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitH1Visiblity(driver)); // Waits for H1 tag to appear
+                        new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitDirectionVisiblity(driver)); } // Waits for direction (PUT/CALL) to appear
                     catch { continue; }
                     GetData(driver);
-
-                    //new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitResultInvisibility(driver)); // Waits for signal to disappear
-                    //driver.Navigate().Refresh(); 
+                    if (Terminate)
+                        break;
+                    // new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitResultInvisibility(driver)); // Waits for signal to disappear
+                    new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitProfitLossVisibility(driver));
+                    driver.Navigate().Refresh();
+                    new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitH1Visiblity(driver));
+                    while ((GetExpiryTime(driver) == CurrentExpiryTime | IsProfitLossVisible(driver)) & !Terminate) // because sometimes even after the PROFIT/LOSS appears, when refreshing the signals didn't update.
+                    {
+                        driver.Navigate().Refresh();
+                        new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitH1Visiblity(driver));
+                        Thread.Sleep(2000);
+                    }
                 }
                 driver.Quit(); // driver.Close(); will close the current browser, and driver.Quit(); will terminate pretty much everything associated with it
                 Stopped = true;
@@ -104,7 +117,29 @@ namespace BinarySignalScrape
         {
             Terminate = true; // stops the asynchronous task in Start();
         }
-
+        public void StartSync(IWebDriver driver)
+        {
+            if (!SyncVisible) // check if signal is visible
+            {
+                try
+                {
+                    var e = driver.FindElement(By.XPath(string.Format("//*[@id='tickers_nav']/li[{0}]/a/span[contains(@style,'inline')]", ChildNo)));
+                    if (!SyncVisible) // check if signal is visible
+                    {
+                        driver.Navigate().GoToUrl(URL); // setting URL property invokes navigating to the URL (loads the document, replacing the previous document. (even if it's the same URL))
+                        new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitForListActive(driver)); // waits for Navigate().GoToUrl(URL) to load 
+                        GetData(driver);
+                        SyncVisible = true;
+                        Console.WriteLine(Symbol + " visible.");
+                    }
+                }
+                catch
+                {
+                    if (SyncVisible)
+                        SyncVisible = false;
+                }
+            }
+        }
         #region HELPER METHODS
         private void GetData(IWebDriver driver)
         {
@@ -113,6 +148,7 @@ namespace BinarySignalScrape
             Regex expiryTime_Pattern = new Regex("\\d{1,2}:\\d\\d");
             IWebElement h1 = driver.FindElement(By.TagName("h1"));
             IWebElement texts = driver.FindElement(By.XPath("//*[@id='chart']/*[local-name()='svg']/*[local-name()='g']/*[local-name()='g'][7]/*[local-name()='text'][contains(text(), 'CALL') or contains(text(), 'PUT')]"));
+            // profit/loss xPath //*[@id="chart"]/*/*/*[local-name()='g'][8]/*[local-name()='text'][contains(text(), 'PROFIT') or contains(text(), 'LOSS')]
             string[] price_directionArr = texts.Text.Split();
 
             // binary-signal data
@@ -126,6 +162,7 @@ namespace BinarySignalScrape
             {
                 string data = symbol + ";" + direction + ";" + price + ";" + expirationTime + ";";
                 CurrentPrice_Direction = Price_Direction;
+                CurrentExpiryTime = expirationTime;
                 WriteToFile(data);
                 Invoke((MethodInvoker)delegate
                 {
@@ -134,6 +171,25 @@ namespace BinarySignalScrape
                     currency_txtBox.AppendText(DateTime.Now.ToString() + " | " + data + Environment.NewLine);
                 });
             }
+        }
+        private bool IsProfitLossVisible(IWebDriver driver)
+        {
+            try
+            {
+                if (Terminate)
+                    return true;
+                var e = driver.FindElement(By.XPath("//*[@id='chart']/*/*/*[local-name()='g'][8]/*[local-name()='text'][contains(text(), 'PROFIT') or contains(text(), 'LOSS')]"));
+                return e.Displayed;
+            }
+            catch { return false; }
+        }
+        private string GetExpiryTime(IWebDriver driver)
+        {
+            Regex expiryTime_Pattern = new Regex("\\d{1,2}:(\\d\\d)");
+            IWebElement h1 = driver.FindElement(By.TagName("h1"));
+            string expiryTime = expiryTime_Pattern.Match(h1.Text).Value;
+            Console.WriteLine(Symbol + ": " + expiryTime + " = " + CurrentExpiryTime + "?");
+            return expiryTime;
         }
         private void LogIn(IWebDriver driver)
         {
@@ -149,6 +205,17 @@ namespace BinarySignalScrape
             Thread.Sleep(300);
             loginButton.Click();
             new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitForLogin(driver));
+        }
+        private bool WaitProfitLossVisibility(IWebDriver driver)
+        {
+            try
+            {
+                if (Terminate)
+                    return true;
+                var e = driver.FindElement(By.XPath("//*[@id='chart']/*/*/*[local-name()='g'][8]/*[local-name()='text'][contains(text(), 'PROFIT') or contains(text(), 'LOSS')]"));
+                return e.Displayed;
+            }
+            catch { return false; }
         }
         private bool WaitResultVisibility(IWebDriver driver)
         {
@@ -180,6 +247,17 @@ namespace BinarySignalScrape
                 if (Terminate)
                     return true;
                 var e = driver.FindElement(By.XPath("//*[@id='chart']/*[local-name()='svg']/*[local-name()='g']/*[local-name()='g'][7]/*[local-name()='text'][contains(text(), 'CALL') or contains(text(), 'PUT')]"));
+                return e.Displayed;
+            }
+            catch { return false; }
+        }
+        private bool WaitH1Visiblity(IWebDriver driver)
+        {
+            try
+            {
+                if (Terminate)
+                    return true;
+                var e = driver.FindElement(By.TagName("h1"));
                 return e.Displayed;
             }
             catch { return false; }

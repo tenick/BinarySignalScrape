@@ -44,13 +44,8 @@ namespace BinarySignalScrape
         /// <param name="e"></param>
         private void start_btn_Click(object sender, EventArgs e)
         {
-            if (!IsSafeToStart())
-            {
-                MessageBox.Show("Enter a valid file path.\nFile path can't be blank.\naccount.txt is missing or empty");
+            if (!StartSuccessful())
                 return;
-            }
-            SetControlsStateOnStart(true);
-            SetTabPagesFilePath();
 
             foreach (Currency_TabPage currency_TabPage in signals_data_tabCtrl.Controls)
             {
@@ -88,6 +83,48 @@ namespace BinarySignalScrape
             fbd.Dispose();
         }
 
+        /// <summary>
+        /// Starts with only 1 thread looping through currency pairs
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="e"></param>
+        private async void startSync_Click(object sender, EventArgs e)
+        {
+            if (!StartSuccessful())
+                return;
+            await Task.Run(() =>
+            {
+                IWebDriver driver;
+                ChromeOptions options = new ChromeOptions();
+                // ChromeDriver is just AWFUL because every version or two it breaks unless you pass cryptic arguments
+                options.PageLoadStrategy = PageLoadStrategy.None; // https://www.skptricks.com/2018/08/timed-out-receiving-message-from-renderer-selenium.html //AGRESSIVE
+                options.AddArguments("start-maximized"); // https://stackoverflow.com/a/26283818/1689770
+                options.AddArguments("enable-automation"); // https://stackoverflow.com/a/43840128/1689770
+                //options.AddArguments("--headless"); // only if you are ACTUALLY running headless
+                options.AddArgument("--ignore-certificate-errors");
+                options.AddArgument("--ignore-ssl-errors");
+                options.AddArguments("--no-sandbox"); //https://stackoverflow.com/a/50725918/1689770
+                options.AddArguments("--disable-infobars"); //https://stackoverflow.com/a/43840128/1689770
+                options.AddArguments("--disable-dev-shm-usage"); //https://stackoverflow.com/a/50725918/1689770
+                options.AddArguments("--disable-browser-side-navigation"); //https://stackoverflow.com/a/49123152/1689770
+                options.AddArguments("--disable-gpu"); //https://stackoverflow.com/questions/51959986/how-to-solve-selenium-chromedriver-timed-out-receiving-message-from-renderer-exc
+                options.AddArguments("--log-level=3");
+                options.AddArguments("--silent");
+                ChromeDriverService chromeDriverService = ChromeDriverService.CreateDefaultService();
+                //chromeDriverService.HideCommandPromptWindow = true;
+                chromeDriverService.SuppressInitialDiagnosticInformation = true;
+
+                driver = new ChromeDriver(chromeDriverService, options);   // initializes driver
+                LogIn(driver);
+                while (true)
+                {
+                    foreach (Currency_TabPage currency_TabPage in signals_data_tabCtrl.Controls)
+                    {
+                        currency_TabPage.StartSync(driver);
+                    }
+                }
+            });
+        }
         #endregion
 
         #region FORM EVENT METHODS
@@ -137,7 +174,41 @@ namespace BinarySignalScrape
         #endregion
 
         #region HELPER METHODS
-
+        private void LogIn(IWebDriver driver)
+        {
+            driver.Navigate().GoToUrl("https://binary-signal.com/en/login/index");
+            new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitForLoginElementsVisibility(driver));
+            string[] accInfo = File.ReadAllLines(@"account.txt");
+            IWebElement usernameInputBox = driver.FindElement(By.CssSelector("input[name='user_name']"));
+            IWebElement passwordInputBox = driver.FindElement(By.CssSelector("input[name='user_password']"));
+            IWebElement loginButton = driver.FindElement(By.CssSelector("body > div.container > form > button"));
+            usernameInputBox.SendKeys(accInfo[0]);
+            Thread.Sleep(300);
+            passwordInputBox.SendKeys(accInfo[1]);
+            Thread.Sleep(300);
+            loginButton.Click();
+            new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitForLogin(driver));
+        }
+        private bool WaitForLoginElementsVisibility(IWebDriver driver)
+        {
+            try
+            {
+                var usernameInputBox = driver.FindElement(By.CssSelector("input[name='user_name']"));
+                var passwordInputBox = driver.FindElement(By.CssSelector("input[name='user_password']"));
+                var loginButton = driver.FindElement(By.CssSelector("body > div.container > form > button"));
+                return usernameInputBox.Displayed & passwordInputBox.Displayed & (loginButton.Displayed & loginButton.Enabled);
+            }
+            catch { return false; }
+        }
+        private bool WaitForLogin(IWebDriver driver)
+        {
+            try
+            {
+                var logIn = driver.FindElement(By.XPath("//*[@id='navbar']/ul/li[4]/a[contains(text(), 'account')]"));
+                return logIn.Displayed;
+            }
+            catch { return false; }
+        }
         /// <summary>
         /// Sets the FilePath field of all modified tab pages in TabControl
         /// </summary>
@@ -197,7 +268,21 @@ namespace BinarySignalScrape
                 index += 1;
             }
         }
-
+        /// <summary>
+        /// Does all necessary things before starting.
+        /// </summary>
+        /// <returns></returns>
+        private bool StartSuccessful()
+        {
+            if (!IsSafeToStart())
+            {
+                MessageBox.Show("Enter a valid file path.\nFile path can't be blank.\naccount.txt is missing or empty");
+                return false;
+            }
+            SetControlsStateOnStart(true);
+            SetTabPagesFilePath();
+            return true;
+        }
         #endregion
 
         #endregion
