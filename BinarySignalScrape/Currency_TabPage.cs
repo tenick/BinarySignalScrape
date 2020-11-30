@@ -198,10 +198,13 @@ namespace BinarySignalScrape
             string[] accInfo = File.ReadAllLines(@"account.txt");
             IWebElement usernameInputBox = driver.FindElement(By.CssSelector("input[name='user_name']"));
             IWebElement passwordInputBox = driver.FindElement(By.CssSelector("input[name='user_password']"));
+            IWebElement rememberMe = driver.FindElement(By.CssSelector("input[name='set_remember_me_cookie']"));
             IWebElement loginButton = driver.FindElement(By.CssSelector("body > div.container > form > button"));
             usernameInputBox.SendKeys(accInfo[0]);
             Thread.Sleep(300);
             passwordInputBox.SendKeys(accInfo[1]);
+            Thread.Sleep(300);
+            rememberMe.Click();
             Thread.Sleep(300);
             loginButton.Click();
             new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitForLogin(driver));
