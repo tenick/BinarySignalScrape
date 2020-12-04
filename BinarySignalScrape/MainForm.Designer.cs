@@ -97,7 +97,7 @@
             this.Controls.Add(this.signals_data_tabCtrl);
             this.Controls.Add(this.start_btn);
             this.Name = "MainForm";
-            this.Text = "Binary Signal Scrape 1.31";
+            this.Text = "Binary Signal Scrape 1.35";
             this.FormClosing += new System.Windows.Forms.FormClosingEventHandler(this.MainForm_FormClosing);
             this.Load += new System.EventHandler(this.MainForm_Load);
             this.ResumeLayout(false);

@@ -10,6 +10,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using NodaTime;
 
 namespace BinarySignalScrape
 {
@@ -59,7 +60,7 @@ namespace BinarySignalScrape
                 IWebDriver driver;
                 ChromeOptions options = new ChromeOptions();
                 // ChromeDriver is just AWFUL because every version or two it breaks unless you pass cryptic arguments
-                options.PageLoadStrategy = PageLoadStrategy.None; // https://www.skptricks.com/2018/08/timed-out-receiving-message-from-renderer-selenium.html //AGRESSIVE
+                //options.PageLoadStrategy = PageLoadStrategy.None; // https://www.skptricks.com/2018/08/timed-out-receiving-message-from-renderer-selenium.html //AGRESSIVE
                 options.AddArguments("start-maximized"); // https://stackoverflow.com/a/26283818/1689770
                 options.AddArguments("enable-automation"); // https://stackoverflow.com/a/43840128/1689770
                 //options.AddArguments("--headless"); // only if you are ACTUALLY running headless
@@ -83,30 +84,68 @@ namespace BinarySignalScrape
                 new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitForListActive(driver)); // waits for Navigate().GoToUrl(URL) to load         
             
                 Console.WriteLine(Symbol + ": " + URL);
-                while (!Terminate)
+                while (!Terminate) // an exception occurs when timeout expires
                 {
                     if (Terminate)
                         break;
-                    new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitResultVisibility(driver)); // Waits for signal to appear
-
-                    try {
+                    //Invoke((MethodInvoker)delegate
+                    //{
+                    //    currency_txtBox.AppendText(DateTime.Now.ToString() + " | " + " ----- " + "Waiting for signal to appear." + " ----- " + Environment.NewLine);
+                    //});
+                    while (!Terminate) // Waits for signal to appear, refresh every 15 minutes of waiting
+                    {
+                        try
+                        {
+                            new WebDriverWait(driver, TimeSpan.FromMinutes(15)).Until(condition => WaitResultVisibility(driver)); // waits for lightning icon
+                            break;
+                        }
+                        catch (WebDriverTimeoutException e) { Console.WriteLine("Loop1"); driver.Navigate().Refresh(); }
+                        catch { }
+                    }
+                    try // wait for necessary elements to load for data gathering
+                    {
+                        Console.WriteLine("Loop2");
                         driver.Navigate().Refresh();
-                        new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitH1Visiblity(driver)); // Waits for H1 tag to appear
-                        new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitDirectionVisiblity(driver)); } // Waits for direction (PUT/CALL) to appear
-                    catch { continue; }
+                        new WebDriverWait(driver, TimeSpan.FromSeconds(15)).Until(condition => WaitH1Visiblity(driver)); // Waits for H1 tag to appear
+                        new WebDriverWait(driver, TimeSpan.FromSeconds(15)).Until(condition => WaitDirectionVisiblity(driver)); // Waits for direction (PUT/CALL) to appear
+                    } 
+                    catch (WebDriverTimeoutException e) { driver.Navigate().Refresh(); continue; } catch { continue; }
+
                     GetData(driver);
+
                     if (Terminate)
                         break;
-                    // new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitResultInvisibility(driver)); // Waits for signal to disappear
-                    new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitProfitLossVisibility(driver));
-                    driver.Navigate().Refresh();
-                    new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitH1Visiblity(driver));
-                    while ((GetExpiryTime(driver) == CurrentExpiryTime | IsProfitLossVisible(driver)) & !Terminate) // because sometimes even after the PROFIT/LOSS appears, when refreshing the signals didn't update.
+
+                    try // Waits for signal to disappear
                     {
+                        int timeRemain = Math.Abs(GetTimeRemaining() + 2);
+                        //Invoke((MethodInvoker)delegate
+                        //{
+                        //    currency_txtBox.AppendText(DateTime.Now.ToString() + " | " + " ----- " + "Waiting for signal to disappear in: " + timeRemain + " minutes ----- " + Environment.NewLine);
+                        //});
+                        new WebDriverWait(driver, TimeSpan.FromMinutes(15)).Until(condition => WaitProfitLossVisibility(driver)); // waits for PROFIT/LOSS to appear
+                        Thread.Sleep(5000);
+                        Console.WriteLine("Loop3");
                         driver.Navigate().Refresh();
-                        new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitH1Visiblity(driver));
-                        Thread.Sleep(2000);
                     }
+                    catch { }
+                    while (GetExpiryTime(driver) == CurrentExpiryTime) // because sometimes even after the PROFIT/LOSS appears, when refreshing the signals didn't update.
+                    {
+                        if (Terminate)
+                            break;
+
+                        try
+                        {
+                            Console.WriteLine("Loop4"); // i think this is the one causing rapid reload
+                            driver.Navigate().Refresh();
+                            new WebDriverWait(driver, TimeSpan.FromSeconds(16)).Until(condition => WaitH1Visiblity(driver));
+                        }
+                        catch { }
+                        Thread.Sleep(5000);
+                    }
+
+                    driver.Navigate().Refresh();
+                    Thread.Sleep(2000);
                 }
                 driver.Quit(); // driver.Close(); will close the current browser, and driver.Quit(); will terminate pretty much everything associated with it
                 Stopped = true;
@@ -185,11 +224,24 @@ namespace BinarySignalScrape
         }
         private string GetExpiryTime(IWebDriver driver)
         {
-            Regex expiryTime_Pattern = new Regex("\\d{1,2}:(\\d\\d)");
-            IWebElement h1 = driver.FindElement(By.TagName("h1"));
-            string expiryTime = expiryTime_Pattern.Match(h1.Text).Value;
-            Console.WriteLine(Symbol + ": " + expiryTime + " = " + CurrentExpiryTime + "?");
-            return expiryTime;
+            while (!Terminate)
+            {
+                try
+                {
+                    new WebDriverWait(driver, TimeSpan.FromSeconds(15)).Until(condition => WaitH1Visiblity(driver));
+                    Regex expiryTime_Pattern = new Regex("\\d{1,2}:(\\d\\d)");
+                    IWebElement h1 = driver.FindElement(By.TagName("h1"));
+                    string expiryTime = expiryTime_Pattern.Match(h1.Text).Value;
+                    Console.WriteLine(Symbol + ": " + expiryTime + " = " + CurrentExpiryTime + "?");
+                    return expiryTime;
+                }
+                catch (WebDriverTimeoutException)
+                {
+                    Console.WriteLine("Loop5");
+                    driver.Navigate().Refresh();
+                } catch { }
+            }
+            return CurrentExpiryTime;
         }
         private void LogIn(IWebDriver driver)
         {
@@ -327,6 +379,26 @@ namespace BinarySignalScrape
             {
                 MessageBox.Show("File path doesn't exist.\n " + e.Message);
             }
+        }
+        public DateTime GetRealTimeInZone()
+        {
+            var clock = NetworkClock.Instance;
+            var now = clock.GetCurrentInstant();
+            var tz = DateTimeZoneProviders.Tzdb.GetSystemDefault();
+            return now.InZone(tz).ToDateTimeUnspecified();
+        }
+        public int GetTimeRemaining()
+        {
+            int localMinute = GetRealTimeInZone().Minute;
+            Regex expiryTime_Pattern = new Regex("\\d{1,2}:(\\d\\d)");
+            int expiryMinute = Convert.ToInt32(expiryTime_Pattern.Match(CurrentExpiryTime).Groups[1].Value);
+            if (expiryMinute == 0)
+                expiryMinute = 60;
+            if (localMinute == 0 & expiryMinute == 60)
+                localMinute = 60;
+            int timeRemaining = expiryMinute - localMinute;
+            Console.WriteLine("----- " + Symbol + " ----- | " + DateTime.Now + "\nWebsite minute: " + expiryMinute + "\n" + "Local minute: " + localMinute + "\n" + "Remaining minute: " + timeRemaining);
+            return timeRemaining;
         }
         #endregion
 
