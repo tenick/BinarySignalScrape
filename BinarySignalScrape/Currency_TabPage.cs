@@ -27,6 +27,8 @@ namespace BinarySignalScrape
         private string CurrentPrice_Direction;
         private string CurrentExpiryTime;
         private string FileName;
+        private bool Repeat;
+        private bool StopRequested;
         public string FilePath { private get; set; }
         public bool Stopped { get; private set; }
 
@@ -56,105 +58,104 @@ namespace BinarySignalScrape
         {
             await Task.Run(() =>
             {
-                Stopped = false;
-                IWebDriver driver;
-                ChromeOptions options = new ChromeOptions();
-                // ChromeDriver is just AWFUL because every version or two it breaks unless you pass cryptic arguments
-                //options.PageLoadStrategy = PageLoadStrategy.None; // https://www.skptricks.com/2018/08/timed-out-receiving-message-from-renderer-selenium.html //AGRESSIVE
-                options.AddArguments("start-maximized"); // https://stackoverflow.com/a/26283818/1689770
-                options.AddArguments("enable-automation"); // https://stackoverflow.com/a/43840128/1689770
-                //options.AddArguments("--headless"); // only if you are ACTUALLY running headless
-                options.AddArgument("--ignore-certificate-errors");
-                options.AddArgument("--ignore-ssl-errors");
-                options.AddArguments("--no-sandbox"); //https://stackoverflow.com/a/50725918/1689770
-                options.AddArguments("--disable-infobars"); //https://stackoverflow.com/a/43840128/1689770
-                options.AddArguments("--disable-dev-shm-usage"); //https://stackoverflow.com/a/50725918/1689770
-                options.AddArguments("--disable-browser-side-navigation"); //https://stackoverflow.com/a/49123152/1689770
-                options.AddArguments("--disable-gpu"); //https://stackoverflow.com/questions/51959986/how-to-solve-selenium-chromedriver-timed-out-receiving-message-from-renderer-exc
-                options.AddArguments("--log-level=3");
-                options.AddArguments("--silent");
-                ChromeDriverService chromeDriverService = ChromeDriverService.CreateDefaultService();
-                //chromeDriverService.HideCommandPromptWindow = true;
-                chromeDriverService.SuppressInitialDiagnosticInformation = true;
-                
-                driver = new ChromeDriver(chromeDriverService, options);   // initializes driver
-                LogIn(driver);
-
-                driver.Navigate().GoToUrl(URL); // setting URL property invokes navigating to the URL (loads the document, replacing the previous document. (even if it's the same URL))
-                new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitForListActive(driver)); // waits for Navigate().GoToUrl(URL) to load         
-            
-                Console.WriteLine(Symbol + ": " + URL);
-                while (!Terminate) // an exception occurs when timeout expires
+                while (true)
                 {
-                    if (Terminate)
-                        break;
-                    //Invoke((MethodInvoker)delegate
-                    //{
-                    //    currency_txtBox.AppendText(DateTime.Now.ToString() + " | " + " ----- " + "Waiting for signal to appear." + " ----- " + Environment.NewLine);
-                    //});
-                    while (!Terminate) // Waits for signal to appear, refresh every 15 minutes of waiting
+                    StopRequested = false;
+                    Terminate = false;
+                    Repeat = false;
+                    Stopped = false;
+                    IWebDriver driver;
+                    ChromeOptions options = new ChromeOptions();
+                    // ChromeDriver is just AWFUL because every version or two it breaks unless you pass cryptic arguments
+                    ChromeDriverService chromeDriverService = ChromeDriverService.CreateDefaultService();
+
+                    driver = new ChromeDriver(chromeDriverService, options);   // initializes driver
+                    LogIn(driver);
+
+                    // HOLY THIS IS IT, READ THE 2ND ANSWER IN THIS LINK https://stackoverflow.com/questions/26937141/how-to-stop-selenium-webdriver-from-waiting-for-page-load
+                    // BASICALLY IT SAYS "if the exception is thrown because of timeout then we can't restore same session so need to create new instance." THAT'S WHY WE GET THE FUCKING BLANK PAGE WHEN REFRESHING
+                    // THE PROBLEM IS IN Refresh() METHOD, FIX ITTTTTT HOOOLY
+                    driver.Manage().Timeouts().PageLoad.Add(TimeSpan.FromMinutes(1));
+
+                    try // try if gotourl works
                     {
-                        try
+                        driver.Navigate().GoToUrl(URL); // setting URL property invokes navigating to the URL (loads the document, replacing the previous document. (even if it's the same URL))
+                        new WebDriverWait(driver, TimeSpan.FromDays(1)).Until(condition => WaitForListActive(driver)); // waits for Navigate().GoToUrl(URL) to load         
+
+                        Console.WriteLine(Symbol + ": " + URL);
+                        while (!Terminate) // an exception occurs when timeout expires
                         {
-                            new WebDriverWait(driver, TimeSpan.FromMinutes(15)).Until(condition => WaitResultVisibility(driver)); // waits for lightning icon
-                            break;
+                            while (!Terminate) // Waits for signal to appear, refresh every 15 minutes of waiting
+                            {
+                                try
+                                {
+                                    new WebDriverWait(driver, TimeSpan.FromMinutes(10)).Until(condition => WaitResultVisibility(driver)); // waits for lightning icon
+                                    Thread.Sleep(1000);
+                                    break;
+                                }
+                                catch { Refresh(driver); }
+                            }
+                            Refresh(driver);
+
+                            if (Terminate)
+                                break;
+
+                            try // getting data
+                            {
+                                GetData(driver);
+                            }
+                            catch { continue; }
+
+                            if (Terminate)
+                                break;
+
+                            try // Waits for signal to disappear
+                            {
+                                new WebDriverWait(driver, TimeSpan.FromMinutes(16)).Until(condition => WaitProfitLossVisibility(driver)); // waits for PROFIT/LOSS to appear
+                                Thread.Sleep(5000);
+                                Console.WriteLine("Loop3");
+                                Refresh(driver);
+                            }
+                            catch { }
+
+                            if (Terminate)
+                                break;
+
+                            while (GetExpiryTime(driver) == CurrentExpiryTime | IsProfitLossVisible(driver)) // because sometimes even after the PROFIT/LOSS appears, when refreshing the signals didn't update OR the PROFIT/LOSS is still there.
+                            {
+                                if (Terminate)
+                                    break;
+                                try
+                                {
+                                    Console.WriteLine("Loop4"); // i think this is the one causing rapid reload
+                                    Refresh(driver);
+                                    new WebDriverWait(driver, TimeSpan.FromSeconds(16)).Until(condition => WaitH1Visiblity(driver));
+                                }
+                                catch { }
+                                Thread.Sleep(5000);
+                            }
+
+                            if (Terminate)
+                                break;
+
+                            Refresh(driver);
+                            Thread.Sleep(2000);
                         }
-                        catch (WebDriverTimeoutException e) { Console.WriteLine("Loop1"); driver.Navigate().Refresh(); }
-                        catch { }
                     }
-                    try // wait for necessary elements to load for data gathering
-                    {
-                        Console.WriteLine("Loop2");
-                        driver.Navigate().Refresh();
-                        new WebDriverWait(driver, TimeSpan.FromSeconds(15)).Until(condition => WaitH1Visiblity(driver)); // Waits for H1 tag to appear
-                        new WebDriverWait(driver, TimeSpan.FromSeconds(15)).Until(condition => WaitDirectionVisiblity(driver)); // Waits for direction (PUT/CALL) to appear
-                    } 
-                    catch (WebDriverTimeoutException e) { driver.Navigate().Refresh(); continue; } catch { continue; }
-
-                    GetData(driver);
-
-                    if (Terminate)
-                        break;
-
-                    try // Waits for signal to disappear
-                    {
-                        int timeRemain = Math.Abs(GetTimeRemaining() + 2);
-                        //Invoke((MethodInvoker)delegate
-                        //{
-                        //    currency_txtBox.AppendText(DateTime.Now.ToString() + " | " + " ----- " + "Waiting for signal to disappear in: " + timeRemain + " minutes ----- " + Environment.NewLine);
-                        //});
-                        new WebDriverWait(driver, TimeSpan.FromMinutes(15)).Until(condition => WaitProfitLossVisibility(driver)); // waits for PROFIT/LOSS to appear
-                        Thread.Sleep(5000);
-                        Console.WriteLine("Loop3");
-                        driver.Navigate().Refresh();
-                    }
-                    catch { }
-                    while (GetExpiryTime(driver) == CurrentExpiryTime) // because sometimes even after the PROFIT/LOSS appears, when refreshing the signals didn't update.
-                    {
-                        if (Terminate)
-                            break;
-
-                        try
-                        {
-                            Console.WriteLine("Loop4"); // i think this is the one causing rapid reload
-                            driver.Navigate().Refresh();
-                            new WebDriverWait(driver, TimeSpan.FromSeconds(16)).Until(condition => WaitH1Visiblity(driver));
-                        }
-                        catch { }
-                        Thread.Sleep(5000);
-                    }
-
-                    driver.Navigate().Refresh();
-                    Thread.Sleep(2000);
+                    catch { Repeat = true; }
+                    driver.Quit(); // driver.Close(); will close the current browser, and driver.Quit(); will terminate pretty much everything associated with it
+                    Stopped = true;
+                    Terminate = false;
+                    if (Repeat & !StopRequested)
+                        continue;
+                    break;
                 }
-                driver.Quit(); // driver.Close(); will close the current browser, and driver.Quit(); will terminate pretty much everything associated with it
-                Stopped = true;
-                Terminate = false;
             });
         }
         public void Stop()
         {
             Terminate = true; // stops the asynchronous task in Start();
+            StopRequested = true; // prevents the repeat
         }
         public void StartSync(IWebDriver driver)
         {
@@ -238,7 +239,9 @@ namespace BinarySignalScrape
                 catch (WebDriverTimeoutException)
                 {
                     Console.WriteLine("Loop5");
-                    driver.Navigate().Refresh();
+                    //driver.Navigate().Refresh();
+                    //driver.Url = URL;
+                    Refresh(driver);
                 } catch { }
             }
             return CurrentExpiryTime;
@@ -330,6 +333,17 @@ namespace BinarySignalScrape
             }
             catch { return false; }
         }
+        private void IsLoginRequired(IWebDriver driver)
+        {
+            try
+            {
+                IWebElement logIn = driver.FindElement(By.XPath("//a[contains(@class, 'btn btn-primary btn-lg') and contains(text(), 'Login')]"));
+                logIn.Click();
+                LogIn(driver);
+                driver.Navigate().GoToUrl(URL); // setting URL property invokes navigating to the URL (loads the document, replacing the previous document. (even if it's the same URL))
+            }
+            catch { return; }
+        }
         private bool WaitForLogin(IWebDriver driver)
         {
             try
@@ -389,16 +403,25 @@ namespace BinarySignalScrape
         }
         public int GetTimeRemaining()
         {
-            int localMinute = GetRealTimeInZone().Minute;
+            int localMinute = GetRealTimeInZone().Minute % 15;
             Regex expiryTime_Pattern = new Regex("\\d{1,2}:(\\d\\d)");
-            int expiryMinute = Convert.ToInt32(expiryTime_Pattern.Match(CurrentExpiryTime).Groups[1].Value);
-            if (expiryMinute == 0)
-                expiryMinute = 60;
-            if (localMinute == 0 & expiryMinute == 60)
-                localMinute = 60;
-            int timeRemaining = expiryMinute - localMinute;
+            int expiryMinute = Convert.ToInt32(expiryTime_Pattern.Match(CurrentExpiryTime).Groups[1].Value) % 15;
+            int timeRemaining = Math.Abs((15 - localMinute) - expiryMinute);
             Console.WriteLine("----- " + Symbol + " ----- | " + DateTime.Now + "\nWebsite minute: " + expiryMinute + "\n" + "Local minute: " + localMinute + "\n" + "Remaining minute: " + timeRemaining);
             return timeRemaining;
+        }
+        public void Refresh(IWebDriver driver)
+        {
+            while (!Terminate)
+            {
+                try
+                {
+                    driver.Navigate().Refresh();
+                    break;
+                }
+                catch (WebDriverException e){ Console.WriteLine(Symbol + " | " + DateTime.Now + "\n" + e.Message); Terminate = true; Repeat = true; }
+                Thread.Sleep(5000);
+            }
         }
         #endregion
 
